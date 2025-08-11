@@ -365,7 +365,7 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in) 
 
                         delta_msec = tr->last_time.sec * 1000 + tr->last_time.msec -  tr->last_last_time.sec * 1000 - tr->last_last_time.msec;
 
-                        if (tr->last_sent - tr->last_last_sent > lircf->limit_traffic_rate/lir->conn) {
+                        if (tr->last_sent - tr->last_last_sent > (off_t) lircf->limit_traffic_rate/lir->conn) {
                             /* first second */
                             delay = (ngx_msec_t)((tr->last_sent - tr->last_last_sent) *1000 / (lircf->limit_traffic_rate/lir->conn));
 
