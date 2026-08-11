@@ -400,7 +400,9 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                             /* first in, let download go */
                             break;
 
-                        } else if (sent * 1000 / delta_msec > (off_t) rate) {
+                        } else if (sent * 1000 / (off_t) delta_msec
+                                   > (off_t) rate)
+                        {
                             delay = (ngx_msec_t) (sent * 1000 / rate);
 
                         }
