@@ -142,7 +142,7 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     ngx_http_limit_traffic_rate_request_t              *req;
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    lircf = ngx_http_get_module_loc_conf(r, 
+    lircf = ngx_http_get_module_loc_conf(r,
                                     ngx_http_limit_traffic_rate_filter_module);
 
     if (lircf->shm_zone == NULL) {
@@ -309,7 +309,7 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                    "limit traffic rate filter");
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    lircf = ngx_http_get_module_loc_conf(r, 
+    lircf = ngx_http_get_module_loc_conf(r,
                                     ngx_http_limit_traffic_rate_filter_module);
 
     if (lircf->shm_zone == NULL) {
@@ -463,7 +463,7 @@ ngx_http_limit_traffic_rate_filter_log_handler(ngx_http_request_t *r)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "limit traffic rate log phase handler");
 
-    lircf = ngx_http_get_module_loc_conf(r, 
+    lircf = ngx_http_get_module_loc_conf(r,
                                     ngx_http_limit_traffic_rate_filter_module);
 
     if (lircf->shm_zone == NULL) {
