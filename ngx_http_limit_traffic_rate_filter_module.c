@@ -127,7 +127,7 @@ static ngx_http_output_body_filter_pt  ngx_http_next_body_filter;
 static ngx_int_t
 ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
 {
-    size_t                                              len, n;
+    size_t                                              len, n, rate;
     uint32_t                                            hash;
     ngx_int_t                                           rc;
     ngx_slab_pool_t                                    *shpool;
@@ -206,7 +206,6 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
             rc = ngx_memn2cmp(vv->data, lir->data, len, (size_t) lir->len);
 
             if (rc == 0) {
-                lir->conn++;
                 req = ngx_slab_alloc_locked(shpool,
                           sizeof(ngx_http_limit_traffic_rate_request_t));
                 if (req == NULL) {
@@ -214,13 +213,14 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
                     return NGX_HTTP_SERVICE_UNAVAILABLE;
                 }
 
+                lir->conn++;
                 req->r = r;
                 req->last_time = *ngx_cached_time;
                 req->last_last_time = *ngx_cached_time;
                 req->last_sent = 0;
                 req->last_last_sent = 0;
-                clcf->sendfile_max_chunk = lircf->limit_traffic_rate
-                                           / lir->conn;
+                rate = lircf->limit_traffic_rate / lir->conn;
+                clcf->sendfile_max_chunk = rate ? rate : 1;
                 ngx_queue_insert_tail(&(lir->rq_top), &req->rq);
                 goto done;
             }
@@ -253,6 +253,7 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     req = ngx_slab_alloc_locked(shpool,
                                 sizeof(ngx_http_limit_traffic_rate_request_t));
     if (req == NULL) {
+        ngx_slab_free_locked(shpool, node);
         ngx_shmtx_unlock(&shpool->mutex);
         return NGX_HTTP_SERVICE_UNAVAILABLE;
     }
@@ -262,7 +263,8 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     req->last_last_time = *ngx_cached_time;
     req->last_sent = 0;
     req->last_last_sent = 0;
-    clcf->sendfile_max_chunk = lircf->limit_traffic_rate / lir->conn;
+    rate = lircf->limit_traffic_rate / lir->conn;
+    clcf->sendfile_max_chunk = rate ? rate : 1;
     ngx_queue_insert_tail(&(lir->rq_top), &req->rq);
 
     ngx_memcpy(lir->data, vv->data, len);
@@ -370,6 +372,10 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
             if (rc == 0) {
                 p = lir->rq_top.next;
                 rate = lircf->limit_traffic_rate / lir->conn;
+                if (rate == 0) {
+                    rate = 1;
+                }
+
                 clcf->sendfile_max_chunk = rate;
 
                 while (p) {
@@ -388,7 +394,7 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                                      - tr->last_last_time.msec;
                         sent = tr->last_sent - tr->last_last_sent;
 
-                        if (sent > (off_t) rate) {
+                        if (sent >= (off_t) rate) {
                             /* first second */
                             delay = (ngx_msec_t) (sent * 1000 / rate);
 
@@ -683,7 +689,9 @@ ngx_http_limit_traffic_rate_filter_init_zone(ngx_shm_zone_t *shm_zone,
     ctx = shm_zone->data;
 
     if (octx) {
-        if (ngx_strcmp(ctx->var.data, octx->var.data) != 0) {
+        if (ctx->var.len != octx->var.len
+            || ngx_strncmp(ctx->var.data, octx->var.data, ctx->var.len) != 0)
+        {
             ngx_log_error(NGX_LOG_EMERG, shm_zone->shm.log, 0,
                           "limit_traffic_rate_filter \"%V\" uses the \"%V\" "
                           "variable "
@@ -859,7 +867,7 @@ ngx_http_limit_traffic_rate(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     if (n == NGX_ERROR) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                            "invalid size of limit_traffic_rate \"%V\"",
-                           &value[3]);
+                           &value[2]);
         return NGX_CONF_ERROR;
     }
 
