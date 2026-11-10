@@ -145,10 +145,16 @@ stop_nginx() {
         kill -TERM "$NGINX_PID" 2>/dev/null || true
         local i
         for i in $(seq 1 30); do
-            kill -0 "$NGINX_PID" 2>/dev/null || return 0
+            if ! kill -0 "$NGINX_PID" 2>/dev/null; then
+                wait "$NGINX_PID" 2>/dev/null || true
+                NGINX_PID=""
+                return 0
+            fi
             sleep 0.1
         done
         kill -KILL "$NGINX_PID" 2>/dev/null || true
+        wait "$NGINX_PID" 2>/dev/null || true
+        NGINX_PID=""
     fi
 }
 

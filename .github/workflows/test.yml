@@ -7,7 +7,7 @@ on:
     inputs:
       nginx_ref:
         description: nginx-ext branch, tag or commit
-        default: '1.31.7'
+        default: '1.31.8'
         required: true
         type: string
 
@@ -23,6 +23,10 @@ jobs:
     if: github.repository == 'HanadaLee/ngx_http_limit_traffic_rate_filter_module'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module_mode: [static, dynamic]
     steps:
       - name: Check out module
         uses: actions/checkout@v6
@@ -33,7 +37,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: HanadaLee/nginx-ext
-          ref: ${{ inputs.nginx_ref || '1.31.7' }}
+          ref: ${{ inputs.nginx_ref || '1.31.8' }}
           path: .ci/nginx
           persist-credentials: false
 
@@ -53,21 +57,26 @@ jobs:
             libssl-dev \
             zlib1g-dev \
             perl \
+            curl \
+            netcat-openbsd \
+            procps \
+            python3 \
             pkg-config
 
       - name: Build and test
         env:
-          TEST_EXPR: disabled
+          TEST_MODULE_MODE: ${{ matrix.module_mode }}
         run: bash util/run-tests.sh
 
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-disabled
+          name: test-logs-${{ matrix.module_mode }}
           path: |
             .ci/test-output/**/*.log
             .ci/test-output/run.log
             t/servroot/logs/
             servroot/logs/
+            /tmp/ngx-*-*/logs/*.log
           if-no-files-found: ignore

@@ -12,10 +12,19 @@ on:
         required: false
         default: ''
 
+permissions:
+  contents: read
+
+concurrency:
+  group: load-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   load-test:
+    if: github.repository == 'HanadaLee/ngx_http_limit_traffic_rate_filter_module'
     name: nginx ${{ matrix.nginx_version }} / ${{ matrix.module_mode }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
 
     strategy:
       fail-fast: false
@@ -26,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set install prefix
         run: |
@@ -100,13 +111,10 @@ jobs:
           TEST_NGINX_MODULE_MODE: ${{ matrix.module_mode }}
           TEST_NGINX_PORT: "18080"
           NO_COLOR: "1"
+          TEST_FILTER: ${{ inputs.test_filter || '' }}
         run: |
-          FILTER="${{ github.event.inputs.test_filter || '' }}"
-          if [ -n "$FILTER" ]; then
-            bash t/load/run_all.sh $FILTER
-          else
-            bash t/load/run_all.sh
-          fi
+          read -r -a filters <<< "$TEST_FILTER"
+          bash t/load/run_all.sh "${filters[@]}"
 
       - name: Upload logs on failure
         if: failure()

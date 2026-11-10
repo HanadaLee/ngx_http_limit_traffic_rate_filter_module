@@ -1,29 +1,18 @@
 # ngx_http_limit_traffic_rate_filter_module
 
+Shares a configured download bandwidth among concurrent requests with the same key (e.g. `$remote_addr`), including connections handled by different nginx worker processes.
 
-Shares a configured download bandwidth among concurrent requests with the
-same key (e.g. `$remote_addr`), including connections handled by different
-nginx worker processes.
-
-nginx's built-in `limit_rate` caps each connection individually. A client
-using a multi-threaded download tool can open *N* connections and receive
-*N × limit_rate* in aggregate. This module tracks all active connections for
-a given key in a shared-memory zone and calculates an approximate fair share:
+nginx's built-in `limit_rate` limits each request independently. A client using a multi-threaded download tool can open *N* connections and receive *N × limit_rate* in aggregate. This module tracks all active requests for a given key in a shared-memory zone and calculates an approximate fair share:
 
 ```
 per-request rate = max(1 byte/s, configured_limit / active_requests)
 ```
 
-Each request refreshes its own rate on subsequent output body-filter calls.
-**Rates are not pushed immediately to sibling requests across workers.**
-In particular, the sum of actual throughput is not a strict instantaneous
-ceiling while membership changes. For a hard aggregate byte budget across
-workers, a different scheduling design is needed (a candidate for v3.0.0).
+Each request refreshes its own rate on subsequent output body-filter calls. **Rates are not pushed immediately to sibling requests across workers.** In particular, the sum of actual throughput is not a strict instantaneous ceiling while membership changes. For a hard aggregate byte budget across workers, a different scheduling design is needed.
 
 ## Requirements
 
-- nginx 1.21.5 or later (documented minimum; CI currently builds 1.26.3,
-  1.28.2 and 1.29.6, not the minimum)
+- nginx 1.21.5 or later (documented minimum; CI currently builds 1.26.3, 1.28.2 and 1.29.6, not the minimum)
 - A C compiler supported by your nginx build (code uses C89-style declarations)
 
 ## Installation
@@ -82,7 +71,7 @@ Syntax:  limit_traffic_rate <zone_name> <rate>;
 Context: http, server, location
 ```
 
-Rate units: `k` (kilobytes/sec), `m` (megabytes/sec), or plain bytes/sec.
+Rate units: `k` (kilobytes/sec), `m` (megabytes/sec), or plain bytes/sec. The rate must be greater than zero.
 
 ## Example
 
@@ -103,41 +92,19 @@ http {
 
 ## Behaviour
 
-**Rate sharing.** A shared counter tracks active requests for each key.
-Joining requests receive their own share immediately. Existing requests learn
-of additions/removals when their output body filter runs again. The module
-sets `r->limit_rate_set` so the nginx write filter respects its chosen rate.
-The module's `limit_traffic_rate` takes precedence over the native nginx
-`limit_rate` in matching locations; the core `limit_rate_after` still applies.
+**Rate sharing.** A shared counter tracks active requests for each key. Joining requests receive their own share immediately. Existing requests learn of additions/removals when their output body filter runs again. The module sets `r->limit_rate_set` so the nginx write filter respects its chosen rate. The module's `limit_traffic_rate` takes precedence over the native nginx `limit_rate` in matching locations; the core `limit_rate_after` still applies.
 
-**Approximation, not a strict aggregate cap.** Refresh timing depends on nginx
-output scheduling and buffering; it is not synchronous across workers. The
-integer division is floored at 1 byte/s because zero disables nginx rate
-limiting. When the number of active requests exceeds the configured limit
-in bytes/s, the combined floor may exceed that limit. The core rate limiter
-can also permit initial bursts. This release does not implement cross-worker
-token-bucket accounting or provide a hard aggregate throughput guarantee.
+**Approximation, not a strict aggregate cap.** Refresh timing depends on nginx output scheduling and buffering; it is not synchronous across workers. The integer division is floored at 1 byte/s because zero disables nginx rate limiting. When the number of active requests exceeds the configured limit in bytes/s, the combined floor may exceed that limit. The core rate limiter can also permit initial bursts. This release does not implement cross-worker token-bucket accounting or provide a hard aggregate throughput guarantee.
 
-**Admission and overload.** The shared counter is a `u_short`: once a key has
-65,535 active registered requests, additional requests for that key receive
-HTTP 503 instead of wrapping the counter. An exhausted shared-memory slab
-also produces HTTP 503. No durable worker-crash recovery is implemented:
-if a worker is killed without request cleanup, a stale count can persist until
-the shared zone is recreated. Normal request completion and client aborts
-perform cleanup via the request pool.
+**Admission and overload.** The shared counter is a `u_short`: once a key has 65,535 active registered requests, additional requests for that key receive HTTP 503 instead of wrapping the counter. An exhausted shared-memory slab also produces HTTP 503. No durable worker-crash recovery is implemented: if a worker is killed without request cleanup, a stale count can persist until the shared zone is recreated. Normal request completion and client aborts perform cleanup via the request pool.
 
-**Passthrough.** The module does not apply a limit when no `limit_traffic_rate`
-directive is present, the key variable is empty or not found, or the key
-value exceeds 1024 bytes.
+**Passthrough.** The module does not apply a limit when no `limit_traffic_rate` directive is present, the key variable is empty or not found, or the key value exceeds 1024 bytes.
 
 ## Validation
 
-The load tests under `t/load/` run with either a statically compiled module
-or a dynamically loaded `.so`. CI configures nginx versions `1.26.3`,
-`1.28.2` and `1.29.6` in both modes. The test suite includes multi-worker
-throughput, nginx `limit_rate` precedence, invalid configuration, request
-cleanup, graceful reload, concurrent shared-zone exhaustion and a
-5,000-request repeated-allocation test.
+The fork also runs `t/limit_traffic_rate.t` and the load tests against nginx-ext 1.31.8 in static and dynamic module builds.
+
+The load tests under `t/load/` run with either a statically compiled module or a dynamically loaded `.so`. CI configures nginx versions `1.26.3`, `1.28.2` and `1.29.6` in both modes. The test suite includes multi-worker throughput, nginx `limit_rate` precedence, invalid configuration, request cleanup, graceful reload, concurrent shared-zone exhaustion and a 5,000-request repeated-allocation test.
 
 ```bash
 # After building nginx with the module, using your actual binary:
@@ -148,9 +115,7 @@ TEST_NGINX_BINARY=/path/to/nginx/sbin/nginx \
     bash t/load/run_all.sh 11 12
 ```
 
-The tests cover selected workloads; they do not establish strict aggregate
-bandwidth guarantees, failure recovery after `SIGKILL`, or compatibility with
-every nginx build and output-filter combination.
+The tests cover selected workloads; they do not establish strict aggregate bandwidth guarantees, failure recovery after `SIGKILL`, or compatibility with every nginx build and output-filter combination.
 
 ## License
 

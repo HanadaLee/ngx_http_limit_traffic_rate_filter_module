@@ -15,31 +15,26 @@
 #include <ngx_http.h>
 
 
-/* -- forward declarations --------------------------------------------------- */
-
-static ngx_int_t ngx_http_limit_traffic_rate_filter_handler(
-    ngx_http_request_t *r);
-static ngx_int_t ngx_http_limit_traffic_rate_filter_init(
-    ngx_conf_t *cf);
-static ngx_int_t ngx_http_limit_traffic_rate_body_filter(
-    ngx_http_request_t *r, ngx_chain_t *in);
-static void *ngx_http_limit_traffic_rate_filter_create_loc_conf(
-    ngx_conf_t *cf);
-static char *ngx_http_limit_traffic_rate_filter_merge_loc_conf(
-    ngx_conf_t *cf, void *parent, void *child);
-static ngx_int_t ngx_http_limit_traffic_rate_filter_init_zone(
-    ngx_shm_zone_t *shm_zone, void *data);
+static ngx_int_t
+ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_limit_traffic_rate_filter_init(ngx_conf_t *cf);
+static ngx_int_t ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r,
+    ngx_chain_t *in);
+static void *ngx_http_limit_traffic_rate_filter_create_loc_conf(ngx_conf_t *cf);
+static char *ngx_http_limit_traffic_rate_filter_merge_loc_conf(ngx_conf_t *cf,
+    void *parent, void *child);
+static ngx_int_t
+ngx_http_limit_traffic_rate_filter_init_zone(ngx_shm_zone_t *shm_zone,
+    void *data);
 static void ngx_http_limit_traffic_rate_filter_rbtree_insert_value(
     ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
     ngx_rbtree_node_t *sentinel);
 static void ngx_http_limit_traffic_rate_filter_cleanup(void *data);
-static char *ngx_http_limit_traffic_rate_zone(
-    ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-static char *ngx_http_limit_traffic_rate(
-    ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf,
+    ngx_command_t *cmd, void *conf);
+static char *ngx_http_limit_traffic_rate(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 
-
-/* -- data structures -------------------------------------------------------- */
 
 /*
  * Pool cleanup record — lives in the request pool (per-worker heap).
@@ -52,10 +47,11 @@ static char *ngx_http_limit_traffic_rate(
  * by scanning a queue for a matching r.
  */
 typedef struct {
-    ngx_shm_zone_t    *shm_zone;
-    ngx_rbtree_node_t *node;
-    size_t             limit;
+    ngx_shm_zone_t     *shm_zone;
+    ngx_rbtree_node_t  *node;
+    size_t              limit;
 } ngx_http_limit_traffic_rate_cleanup_t;
+
 
 /*
  * Red-black tree node payload, aliased from rbtree_node.color.
@@ -68,11 +64,12 @@ typedef struct {
  * There is no queue, no request pointer, no process-local address here.
  */
 typedef struct {
-    u_char   color;   /* MUST be first: aliased from ngx_rbtree_node_t.color */
-    u_short  len;
-    u_short  conn;    /* protected by shpool->mutex on every read/write       */
-    u_char   data[1]; /* flexible array; actual allocation covers len bytes   */
+    u_char  color; /* MUST be first: aliased from ngx_rbtree_node_t.color */
+    u_short len;
+    u_short conn;    /* protected by shpool->mutex on every read/write       */
+    u_char  data[1]; /* flexible array; actual allocation covers len bytes   */
 } ngx_http_limit_traffic_rate_node_t;
+
 
 typedef struct {
     ngx_rbtree_t  *rbtree;
@@ -80,61 +77,66 @@ typedef struct {
     ngx_str_t      var;
 } ngx_http_limit_traffic_rate_ctx_t;
 
+
 typedef struct {
-    size_t          limit_traffic_rate;
-    ngx_shm_zone_t *shm_zone;
+    size_t           limit_traffic_rate;
+    ngx_shm_zone_t  *shm_zone;
 } ngx_http_limit_traffic_rate_conf_t;
 
 
-/* -- module directives ------------------------------------------------------ */
-
-static ngx_command_t ngx_http_limit_traffic_rate_filter_commands[] = {
+static ngx_command_t  ngx_http_limit_traffic_rate_filter_commands[] = {
 
     { ngx_string("limit_traffic_rate_zone"),
-      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE3,
-      ngx_http_limit_traffic_rate_zone,
-      0, 0, NULL },
+      NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE3, ngx_http_limit_traffic_rate_zone, 0,
+      0, NULL },
 
     { ngx_string("limit_traffic_rate"),
-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE2,
-      ngx_http_limit_traffic_rate,
-      NGX_HTTP_LOC_CONF_OFFSET, 0, NULL },
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF
+          | NGX_CONF_TAKE2,
+      ngx_http_limit_traffic_rate, NGX_HTTP_LOC_CONF_OFFSET, 0, NULL },
 
     ngx_null_command
 };
 
 
-static ngx_http_module_t ngx_http_limit_traffic_rate_filter_module_ctx = {
+static ngx_http_module_t  ngx_http_limit_traffic_rate_filter_module_ctx = {
     NULL,
     ngx_http_limit_traffic_rate_filter_init,
-    NULL, NULL,
-    NULL, NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     ngx_http_limit_traffic_rate_filter_create_loc_conf,
     ngx_http_limit_traffic_rate_filter_merge_loc_conf
 };
 
 
-ngx_module_t ngx_http_limit_traffic_rate_filter_module = {
+ngx_module_t  ngx_http_limit_traffic_rate_filter_module = {
     NGX_MODULE_V1,
     &ngx_http_limit_traffic_rate_filter_module_ctx,
     ngx_http_limit_traffic_rate_filter_commands,
     NGX_HTTP_MODULE,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     NGX_MODULE_V1_PADDING
 };
 
+
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
-
-/* -- shared rbtree lookup (internal, called with mutex held) --------------- */
 
 /* A zero rate disables nginx's limiter. Never round a share down to zero. */
 static size_t
 ngx_http_limit_traffic_rate_share(size_t limit, u_short conn)
 {
-    size_t rate;
+    size_t  rate;
 
-    rate = limit / conn;  /* caller holds the lock and checks conn != 0 */
+    rate = limit / conn; /* caller holds the lock and checks conn != 0 */
     return rate ? rate : 1;
 }
 
@@ -144,26 +146,31 @@ ngx_http_limit_traffic_rate_share(size_t limit, u_short conn)
  * to its payload, or NULL if not found. Caller must hold shpool->mutex.
  */
 static ngx_http_limit_traffic_rate_node_t *
-ngx_http_limit_traffic_rate_lookup(
-    ngx_http_limit_traffic_rate_ctx_t *ctx,
-    uint32_t hash, u_char *data, size_t len,
-    ngx_rbtree_node_t **node_out)
+ngx_http_limit_traffic_rate_lookup(ngx_http_limit_traffic_rate_ctx_t *ctx,
+    uint32_t hash, u_char *data, size_t len, ngx_rbtree_node_t **node_out)
 {
-    ngx_int_t                             rc;
-    ngx_rbtree_node_t                    *node, *sentinel;
-    ngx_http_limit_traffic_rate_node_t   *lir;
+    ngx_int_t                            rc;
+    ngx_rbtree_node_t                   *node, *sentinel;
+    ngx_http_limit_traffic_rate_node_t  *lir;
 
-    node     = ctx->rbtree->root;
+    node = ctx->rbtree->root;
     sentinel = ctx->rbtree->sentinel;
 
     while (node != sentinel) {
 
-        if (hash < node->key) { node = node->left;  continue; }
-        if (hash > node->key) { node = node->right; continue; }
+        if (hash < node->key) {
+            node = node->left;
+            continue;
+        }
+
+        if (hash > node->key) {
+            node = node->right;
+            continue;
+        }
 
         do {
             lir = (ngx_http_limit_traffic_rate_node_t *) &node->color;
-            rc  = ngx_memn2cmp(data, lir->data, len, (size_t) lir->len);
+            rc = ngx_memn2cmp(data, lir->data, len, (size_t) lir->len);
 
             if (rc == 0) {
                 if (node_out != NULL) {
@@ -183,12 +190,9 @@ ngx_http_limit_traffic_rate_lookup(
 }
 
 
-/* -- PREACCESS phase handler ------------------------------------------------ */
-
 static ngx_int_t
 ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
 {
-    /* C89: all declarations before statements. */
     size_t                                  len, n;
     uint32_t                                hash;
     ngx_slab_pool_t                        *shpool;
@@ -200,15 +204,15 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     ngx_http_limit_traffic_rate_conf_t     *lircf;
     ngx_http_limit_traffic_rate_cleanup_t  *lircln;
 
-    lircf = ngx_http_get_module_loc_conf(r,
-                ngx_http_limit_traffic_rate_filter_module);
+    lircf = ngx_http_get_module_loc_conf(
+        r, ngx_http_limit_traffic_rate_filter_module);
 
     if (lircf->shm_zone == NULL) {
         return NGX_DECLINED;
     }
 
     ctx = lircf->shm_zone->data;
-    vv  = ngx_http_get_indexed_variable(r, ctx->index);
+    vv = ngx_http_get_indexed_variable(r, ctx->index);
 
     if (vv == NULL || vv->not_found) {
         return NGX_DECLINED;
@@ -223,7 +227,8 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     if (len > 1024) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                       "limit_traffic_rate: \"%V\" variable value "
-                      "exceeds 1024 bytes", &ctx->var);
+                      "exceeds 1024 bytes",
+                      &ctx->var);
         return NGX_DECLINED;
     }
 
@@ -234,7 +239,7 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
      * must not happen while holding the shmtx spinlock.
      */
     cln = ngx_pool_cleanup_add(r->pool,
-              sizeof(ngx_http_limit_traffic_rate_cleanup_t));
+                               sizeof(ngx_http_limit_traffic_rate_cleanup_t));
     if (cln == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
@@ -259,7 +264,7 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
 
         lir->conn++;
         r->limit_rate = ngx_http_limit_traffic_rate_share(
-                            lircf->limit_traffic_rate, lir->conn);
+            lircf->limit_traffic_rate, lir->conn);
 
     } else {
         /*
@@ -267,8 +272,7 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
          * This worker gets the full configured rate.
          */
         n = offsetof(ngx_rbtree_node_t, color)
-          + offsetof(ngx_http_limit_traffic_rate_node_t, data)
-          + len;
+            + offsetof(ngx_http_limit_traffic_rate_node_t, data) + len;
 
         node = ngx_slab_alloc_locked(shpool, n);
         if (node == NULL) {
@@ -276,10 +280,10 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
             return NGX_HTTP_SERVICE_UNAVAILABLE;
         }
 
-        lir        = (ngx_http_limit_traffic_rate_node_t *) &node->color;
-        node->key  = hash;
-        lir->len   = (u_short) len;
-        lir->conn  = 1;
+        lir = (ngx_http_limit_traffic_rate_node_t *) &node->color;
+        node->key = hash;
+        lir->len = (u_short) len;
+        lir->conn = 1;
 
         ngx_memcpy(lir->data, vv->data, len);
         ngx_rbtree_insert(ctx->rbtree, node);
@@ -293,11 +297,11 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     ngx_shmtx_unlock(&shpool->mutex);
 
     cln->handler = ngx_http_limit_traffic_rate_filter_cleanup;
-    lircln       = cln->data;
+    lircln = cln->data;
 
     lircln->shm_zone = lircf->shm_zone;
-    lircln->node     = node;
-    lircln->limit    = lircf->limit_traffic_rate;
+    lircln->node = node;
+    lircln->limit = lircf->limit_traffic_rate;
 
     /* Mark our value as authoritative for the core write filter. */
     r->limit_rate_set = 1;
@@ -308,8 +312,6 @@ ngx_http_limit_traffic_rate_filter_handler(ngx_http_request_t *r)
     return NGX_DECLINED;
 }
 
-
-/* -- body filter: refresh r->limit_rate from the current conn count ------- */
 
 /*
  * Refresh only requests registered in PREACCESS.  The request-pool cleanup
@@ -325,8 +327,8 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ngx_http_limit_traffic_rate_node_t     *lir;
     ngx_http_limit_traffic_rate_cleanup_t  *lircln;
 
-    lircln = ngx_http_get_module_ctx(r,
-                 ngx_http_limit_traffic_rate_filter_module);
+    lircln =
+        ngx_http_get_module_ctx(r, ngx_http_limit_traffic_rate_filter_module);
     if (lircln == NULL) {
         return ngx_http_next_body_filter(r, in);
     }
@@ -336,8 +338,8 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     lir = (ngx_http_limit_traffic_rate_node_t *) &lircln->node->color;
     if (lir->conn != 0) {
-        r->limit_rate = ngx_http_limit_traffic_rate_share(
-                            lircln->limit, lir->conn);
+        r->limit_rate =
+            ngx_http_limit_traffic_rate_share(lircln->limit, lir->conn);
         r->limit_rate_set = 1;
     }
 
@@ -346,8 +348,6 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     return ngx_http_next_body_filter(r, in);
 }
 
-
-/* -- cleanup handler ------------------------------------------------------- */
 
 /*
  * Fires when r->pool is destroyed — after normal completion, timeout, or
@@ -358,24 +358,23 @@ ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 static void
 ngx_http_limit_traffic_rate_filter_cleanup(void *data)
 {
-    /* C89: all declarations before statements. */
-    ngx_http_limit_traffic_rate_cleanup_t *lircln = data;
+    ngx_http_limit_traffic_rate_cleanup_t  *lircln = data;
 
     ngx_slab_pool_t                       *shpool;
     ngx_rbtree_node_t                     *node;
     ngx_http_limit_traffic_rate_ctx_t     *ctx;
     ngx_http_limit_traffic_rate_node_t    *lir;
 
-    ctx    = lircln->shm_zone->data;
+    ctx = lircln->shm_zone->data;
     shpool = (ngx_slab_pool_t *) lircln->shm_zone->shm.addr;
-    node   = lircln->node;
-    lir    = (ngx_http_limit_traffic_rate_node_t *) &node->color;
+    node = lircln->node;
+    lir = (ngx_http_limit_traffic_rate_node_t *) &node->color;
 
     ngx_shmtx_lock(&shpool->mutex);
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, lircln->shm_zone->shm.log, 0,
-                   "limit traffic rate cleanup: %08XD conn=%d",
-                   node->key, lir->conn);
+                   "limit traffic rate cleanup: %08XD conn=%d", node->key,
+                   lir->conn);
 
     if (lir->conn > 0) {
         lir->conn--;
@@ -390,13 +389,11 @@ ngx_http_limit_traffic_rate_filter_cleanup(void *data)
 }
 
 
-/* -- module init ----------------------------------------------------------- */
-
 static ngx_int_t
 ngx_http_limit_traffic_rate_filter_init(ngx_conf_t *cf)
 {
     ngx_http_handler_pt       *h;
-    ngx_http_core_main_conf_t *cmcf;
+    ngx_http_core_main_conf_t  *cmcf;
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
@@ -407,37 +404,35 @@ ngx_http_limit_traffic_rate_filter_init(ngx_conf_t *cf)
     *h = ngx_http_limit_traffic_rate_filter_handler;
 
     ngx_http_next_body_filter = ngx_http_top_body_filter;
-    ngx_http_top_body_filter  = ngx_http_limit_traffic_rate_body_filter;
+    ngx_http_top_body_filter = ngx_http_limit_traffic_rate_body_filter;
 
     return NGX_OK;
 }
 
 
-/* -- location config ------------------------------------------------------- */
-
 static void *
 ngx_http_limit_traffic_rate_filter_create_loc_conf(ngx_conf_t *cf)
 {
-    ngx_http_limit_traffic_rate_conf_t *conf;
+    ngx_http_limit_traffic_rate_conf_t  *conf;
 
-    conf = ngx_pcalloc(cf->pool,
-               sizeof(ngx_http_limit_traffic_rate_conf_t));
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_limit_traffic_rate_conf_t));
     if (conf == NULL) {
-        return NGX_CONF_ERROR;
+        return NULL;
     }
 
     conf->limit_traffic_rate = NGX_CONF_UNSET_SIZE;
-    conf->shm_zone           = NGX_CONF_UNSET_PTR;
+    conf->shm_zone = NGX_CONF_UNSET_PTR;
 
     return conf;
 }
 
+
 static char *
-ngx_http_limit_traffic_rate_filter_merge_loc_conf(ngx_conf_t *cf,
-    void *parent, void *child)
+ngx_http_limit_traffic_rate_filter_merge_loc_conf(ngx_conf_t *cf, void *parent,
+    void *child)
 {
-    ngx_http_limit_traffic_rate_conf_t *prev = parent;
-    ngx_http_limit_traffic_rate_conf_t *conf = child;
+    ngx_http_limit_traffic_rate_conf_t  *prev = parent;
+    ngx_http_limit_traffic_rate_conf_t  *conf = child;
 
     ngx_conf_merge_size_value(conf->limit_traffic_rate,
                               prev->limit_traffic_rate, 0);
@@ -447,17 +442,14 @@ ngx_http_limit_traffic_rate_filter_merge_loc_conf(ngx_conf_t *cf,
 }
 
 
-/* -- rbtree ---------------------------------------------------------------- */
-
 static void
-ngx_http_limit_traffic_rate_filter_rbtree_insert_value(
-    ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
-    ngx_rbtree_node_t *sentinel)
+ngx_http_limit_traffic_rate_filter_rbtree_insert_value(ngx_rbtree_node_t *temp,
+    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
 {
-    ngx_rbtree_node_t                   **p;
+    ngx_rbtree_node_t                  **p;
     ngx_http_limit_traffic_rate_node_t  *lirn, *lirnt;
 
-    for (;;) {
+    for ( ;; ) {
 
         if (node->key < temp->key) {
             p = &temp->left;
@@ -466,12 +458,13 @@ ngx_http_limit_traffic_rate_filter_rbtree_insert_value(
             p = &temp->right;
 
         } else {
-            lirn  = (ngx_http_limit_traffic_rate_node_t *) &node->color;
+            lirn = (ngx_http_limit_traffic_rate_node_t *) &node->color;
             lirnt = (ngx_http_limit_traffic_rate_node_t *) &temp->color;
 
-            p = (ngx_memn2cmp(lirn->data, lirnt->data,
-                              lirn->len, lirnt->len) < 0)
-                ? &temp->left : &temp->right;
+            p = (ngx_memn2cmp(lirn->data, lirnt->data, lirn->len, lirnt->len)
+                 < 0) ?
+                    &temp->left :
+                    &temp->right;
         }
 
         if (*p == sentinel) {
@@ -481,27 +474,24 @@ ngx_http_limit_traffic_rate_filter_rbtree_insert_value(
         temp = *p;
     }
 
-    *p           = node;
+    *p = node;
     node->parent = temp;
-    node->left   = sentinel;
-    node->right  = sentinel;
+    node->left = sentinel;
+    node->right = sentinel;
     ngx_rbt_red(node);
 }
 
 
-/* -- shared memory zone init ----------------------------------------------- */
-
 static ngx_int_t
-ngx_http_limit_traffic_rate_filter_init_zone(
-    ngx_shm_zone_t *shm_zone, void *data)
+ngx_http_limit_traffic_rate_filter_init_zone(ngx_shm_zone_t *shm_zone,
+    void *data)
 {
-    ngx_http_limit_traffic_rate_ctx_t *octx = data;
+    ngx_http_limit_traffic_rate_ctx_t  *octx = data;
 
-    /* C89: all declarations before statements. */
-    size_t                             len;
-    ngx_slab_pool_t                   *shpool;
-    ngx_rbtree_node_t                 *sentinel;
-    ngx_http_limit_traffic_rate_ctx_t *ctx;
+    size_t                              len;
+    ngx_slab_pool_t                    *shpool;
+    ngx_rbtree_node_t                  *sentinel;
+    ngx_http_limit_traffic_rate_ctx_t  *ctx;
 
     ctx = shm_zone->data;
 
@@ -556,23 +546,19 @@ ngx_http_limit_traffic_rate_filter_init_zone(
 }
 
 
-/* -- directive parsing ----------------------------------------------------- */
-
 static char *
-ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf, ngx_command_t *cmd,
-    void *conf)
+ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    /* C89: all declarations before statements. */
-    ssize_t                            n;
-    ngx_str_t                         *value;
-    ngx_shm_zone_t                    *shm_zone;
-    ngx_http_limit_traffic_rate_ctx_t *ctx;
+    ssize_t                             n;
+    ngx_str_t                          *value;
+    ngx_shm_zone_t                     *shm_zone;
+    ngx_http_limit_traffic_rate_ctx_t  *ctx;
 
     value = cf->args->elts;
 
     if (value[2].len < 2 || value[2].data[0] != '$') {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "invalid variable name \"%V\"", &value[2]);
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable name \"%V\"",
+                           &value[2]);
         return NGX_CONF_ERROR;
     }
 
@@ -599,15 +585,15 @@ ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf, ngx_command_t *cmd,
         return NGX_CONF_ERROR;
     }
 
-    if (n < (ngx_int_t)(8 * ngx_pagesize)) {
+    if (n < (ngx_int_t) (8 * ngx_pagesize)) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                            "limit_traffic_rate_zone \"%V\" is too small",
                            &value[1]);
         return NGX_CONF_ERROR;
     }
 
-    shm_zone = ngx_shared_memory_add(cf, &value[1], n,
-                   &ngx_http_limit_traffic_rate_filter_module);
+    shm_zone = ngx_shared_memory_add(
+        cf, &value[1], n, &ngx_http_limit_traffic_rate_filter_module);
     if (shm_zone == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -616,7 +602,8 @@ ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf, ngx_command_t *cmd,
         ctx = shm_zone->data;
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                            "limit_traffic_rate_zone \"%V\" is already bound "
-                           "to variable \"%V\"", &value[1], &ctx->var);
+                           "to variable \"%V\"",
+                           &value[1], &ctx->var);
         return NGX_CONF_ERROR;
     }
 
@@ -630,16 +617,15 @@ ngx_http_limit_traffic_rate_zone(ngx_conf_t *cf, ngx_command_t *cmd,
 static char *
 ngx_http_limit_traffic_rate(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_limit_traffic_rate_conf_t *lircf = conf;
+    ngx_http_limit_traffic_rate_conf_t  *lircf = conf;
 
-    /* C89: all declarations before statements. */
-    ngx_int_t   n;
-    ngx_str_t  *value;
+    ngx_int_t                           n;
+    ngx_str_t                          *value;
 
     value = cf->args->elts;
 
-    lircf->shm_zone = ngx_shared_memory_add(cf, &value[1], 0,
-                          &ngx_http_limit_traffic_rate_filter_module);
+    lircf->shm_zone = ngx_shared_memory_add(
+        cf, &value[1], 0, &ngx_http_limit_traffic_rate_filter_module);
     if (lircf->shm_zone == NULL) {
         return NGX_CONF_ERROR;
     }

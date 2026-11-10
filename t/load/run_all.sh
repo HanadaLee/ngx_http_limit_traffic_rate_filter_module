@@ -30,7 +30,6 @@ _interrupted_cleanup() {
         kill -- -"${CURRENT_TEST_PID}" 2>/dev/null || true
         wait "${CURRENT_TEST_PID}" 2>/dev/null || true
     fi
-    pkill -TERM -f "nginx-static\|nginx-dynamic\|nginx/sbin" 2>/dev/null || true
     echo "# done"
     exit 130
 }
@@ -89,6 +88,13 @@ for script in "${TESTS[@]}"; do
     passed=$(grep -c '^ok '      "$tmpout" 2>/dev/null || true); passed="${passed:-0}"
     failed=$(grep -c '^not ok '  "$tmpout" 2>/dev/null || true); failed="${failed:-0}"
     bailed=$(grep -c '^Bail out!' "$tmpout" 2>/dev/null || true); bailed="${bailed:-0}"
+    planned=$(awk '/^1\.\.[0-9]+$/ { sub(/^1\.\./, ""); print; exit }' "$tmpout")
+    incomplete=0
+    if [ -z "$planned" ] || [ "$((passed + failed))" -ne "$planned" ]; then
+        incomplete=1
+        printf 'Incomplete TAP plan: expected %s, observed %s\n' \
+            "${planned:-missing}" "$((passed + failed))"
+    fi
 
     rm -f "$tmpout"
 
@@ -96,7 +102,8 @@ for script in "${TESTS[@]}"; do
         printf "${YELLOW}TIMEOUT${RESET}: %s\n" "$name"
         SUITE_ERRORS=$(( SUITE_ERRORS + 1 ))
         RESULTS+=("TIMEOUT $name")
-    elif [ "$exit_code" -ne 0 ] || [ "$failed" -gt 0 ] || [ "$bailed" -gt 0 ]; then
+    elif [ "$exit_code" -ne 0 ] || [ "$failed" -gt 0 ] \
+        || [ "$bailed" -gt 0 ] || [ "$incomplete" -ne 0 ]; then
         printf "${RED}FAIL${RESET}: %s (%d passed, %d failed)\n" "$name" "$passed" "$failed"
         SUITE_FAILED=$(( SUITE_FAILED + 1 ))
         RESULTS+=("FAIL $name ($passed passed, $failed failed)")
