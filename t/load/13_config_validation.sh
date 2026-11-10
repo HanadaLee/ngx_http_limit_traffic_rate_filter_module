@@ -34,11 +34,11 @@ NGINXCONF
 }
 
 expect_invalid "reject dollar-only variable" \
-    '    limit_traffic_rate_zone bucket $ 1m;' 'invalid variable name'
-expect_invalid "reject missing dollar variable prefix" \
-    '    limit_traffic_rate_zone bucket remote_addr 1m;' 'invalid variable name'
+    '    limit_traffic_rate_zone $ zone=bucket:1m;' 'invalid variable name'
+expect_invalid "reject unknown zone parameter" \
+    '    limit_traffic_rate_zone $remote_addr bucket=1m;' 'invalid parameter'
 expect_invalid "reject zero rate" \
-    $'    limit_traffic_rate_zone bucket $remote_addr 1m;\n    limit_traffic_rate bucket 0;' \
-    'rate must be positive'
+    $'    limit_traffic_rate_zone $remote_addr zone=bucket:1m;\n    limit_traffic_rate zone=bucket rate=0;' \
+    'invalid rate'
 expect_invalid "reject undersized shared memory zone" \
-    '    limit_traffic_rate_zone bucket $remote_addr 1k;' 'too small'
+    '    limit_traffic_rate_zone $remote_addr zone=bucket:1k;' 'too small'

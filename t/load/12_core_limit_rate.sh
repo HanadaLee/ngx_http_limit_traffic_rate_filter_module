@@ -19,13 +19,13 @@ pid $TEST_DIR/nginx.pid;
 error_log $TEST_DIR/logs/error.log debug;
 events { worker_connections 128; }
 http {
-    limit_traffic_rate_zone bucket \$remote_addr 2m;
+    limit_traffic_rate_zone \$remote_addr zone=bucket:2m;
     server {
         listen ${TEST_PORT};
         location /files/ {
             root $TEST_DIR;
             limit_rate 10m;
-            limit_traffic_rate bucket 64k;
+            limit_traffic_rate zone=bucket rate=64k;
         }
     }
 }

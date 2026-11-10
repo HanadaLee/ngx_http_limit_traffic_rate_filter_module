@@ -27,6 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         module_mode: [static, dynamic]
+        expr: [enabled, disabled]
     steps:
       - name: Check out module
         uses: actions/checkout@v6
@@ -48,6 +49,15 @@ jobs:
           path: .ci/nginx-tests
           persist-credentials: false
 
+      - name: Check out expr
+        if: matrix.expr == 'enabled'
+        uses: actions/checkout@v6
+        with:
+          repository: HanadaLee/ngx_expr_module
+          ref: '1.0.0'
+          path: .ci/ngx_expr_module
+          persist-credentials: false
+
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
@@ -66,13 +76,14 @@ jobs:
       - name: Build and test
         env:
           TEST_MODULE_MODE: ${{ matrix.module_mode }}
+          TEST_EXPR: ${{ matrix.expr }}
         run: bash util/run-tests.sh
 
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ matrix.module_mode }}
+          name: test-logs-${{ matrix.module_mode }}-expr-${{ matrix.expr }}
           path: |
             .ci/test-output/**/*.log
             .ci/test-output/run.log

@@ -25,12 +25,12 @@ pid $TEST_DIR/nginx.pid;
 error_log $TEST_DIR/logs/error.log notice;
 events { worker_connections 256; }
 http {
-    limit_traffic_rate_zone bucket \$arg_key ${MIN_ZONE_BYTES};
+    limit_traffic_rate_zone \$arg_key zone=bucket:${MIN_ZONE_BYTES};
     server {
         listen ${TEST_PORT};
         location /files/ {
             root $TEST_DIR;
-            limit_traffic_rate bucket 100k;
+            limit_traffic_rate zone=bucket rate=100k;
         }
     }
 }

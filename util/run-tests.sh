@@ -7,6 +7,7 @@ nginx_source="$module_root/.ci/nginx"
 test_output="$module_root/.ci/test-output"
 build_jobs="${TEST_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 module_mode="${TEST_MODULE_MODE:-static}"
+expr_mode="${TEST_EXPR:-enabled}"
 mkdir -p "$test_output"
 exec > >(tee "$test_output/run.log") 2>&1
 
@@ -22,6 +23,14 @@ configure_args=(
     --with-stream_ssl_module
     --with-stream_realip_module
 )
+
+case "$expr_mode" in
+    enabled)
+        configure_args+=(--add-module="$module_root/.ci/ngx_expr_module")
+        ;;
+    disabled) ;;
+    *) echo "Unsupported expr mode: $expr_mode" >&2; exit 1 ;;
+esac
 
 case "$module_mode" in
     static) configure_args+=(--add-module="$module_root") ;;

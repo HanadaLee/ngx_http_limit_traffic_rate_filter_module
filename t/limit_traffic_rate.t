@@ -36,7 +36,7 @@ events {
 http {
     %%TEST_GLOBALS_HTTP%%
 
-    limit_traffic_rate_zone rate $arg_key 1m;
+    limit_traffic_rate_zone $arg_key zone=rate:1m;
 
     server {
         listen       127.0.0.1:8080;
@@ -44,14 +44,14 @@ http {
 
         sendfile off;
         postpone_output 0;
-        limit_traffic_rate rate 10k;
+        limit_traffic_rate zone=rate rate=10k;
 
         location = /data {
             alias %%TESTDIR%%/data;
         }
 
         location = /slower {
-            limit_traffic_rate rate 5k;
+            limit_traffic_rate zone=rate rate=5k;
             alias %%TESTDIR%%/data;
         }
     }

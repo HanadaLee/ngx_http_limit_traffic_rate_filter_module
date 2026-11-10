@@ -46,8 +46,8 @@ error_log $TEST_DIR/logs/error.log debug;
 events { worker_connections 64; }
 
 http {
-    limit_traffic_rate_zone rate_real   \$remote_addr 2m;
-    limit_traffic_rate_zone rate_custom \$arg_key     2m;
+    limit_traffic_rate_zone \$remote_addr zone=rate_real:2m;
+    limit_traffic_rate_zone \$arg_key zone=rate_custom:2m;
 
     server {
         listen ${TEST_PORT};
@@ -61,14 +61,14 @@ http {
         # The module must decline without blocking or returning an error.
         location /empty-var/ {
             alias $TEST_DIR/files/;
-            limit_traffic_rate rate_custom 100k;
+            limit_traffic_rate zone=rate_custom rate=100k;
         }
 
         # Normal rate-limited location used to verify zone health after
         # the decline tests have run.
         location /limited/ {
             alias $TEST_DIR/files/;
-            limit_traffic_rate rate_real 100k;
+            limit_traffic_rate zone=rate_real rate=100k;
         }
     }
 }

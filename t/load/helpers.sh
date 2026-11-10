@@ -88,7 +88,7 @@ error_log $TEST_DIR/logs/error.log debug;
 events { worker_connections 512; }
 
 http {
-    limit_traffic_rate_zone rate \$remote_addr ${zone_size};
+    limit_traffic_rate_zone \$remote_addr zone=rate:${zone_size};
 
     log_format test '\$remote_addr "\$request" \$status \$body_bytes_sent';
     access_log $TEST_DIR/logs/access.log test;
@@ -98,7 +98,7 @@ http {
 
         location /files/ {
             root $TEST_DIR;
-            limit_traffic_rate rate ${rate};
+            limit_traffic_rate zone=rate rate=${rate};
             add_header Accept-Ranges bytes;
         }
 

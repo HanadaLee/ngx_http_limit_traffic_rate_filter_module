@@ -58,7 +58,7 @@ error_log $TEST_DIR/logs/error.log debug;
 events { worker_connections 256; }
 
 http {
-    limit_traffic_rate_zone rate \$remote_addr 4m;
+    limit_traffic_rate_zone \$remote_addr zone=rate:4m;
 
     log_format test '\$status';
     access_log $TEST_DIR/logs/access.log test;
@@ -67,7 +67,7 @@ http {
         listen ${TEST_PORT};
         location /files/ {
             root $TEST_DIR;
-            limit_traffic_rate rate ${RATE_DIRECTIVE};
+            limit_traffic_rate zone=rate rate=${RATE_DIRECTIVE};
             add_header Accept-Ranges bytes;
         }
     }

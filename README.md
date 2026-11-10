@@ -37,6 +37,18 @@ Add to the top of `nginx.conf`, before any `events {}` or `http {}` block:
 load_module modules/ngx_http_limit_traffic_rate_filter_module.so;
 ```
 
+### Conditional configuration
+
+To use `when`, build [ngx_expr_module](https://github.com/HanadaLee/ngx_expr_module) statically before this module:
+
+```bash
+./configure \
+    --add-module=/path/to/ngx_expr_module \
+    --add-module=/path/to/ngx_http_limit_traffic_rate_filter_module
+```
+
+The traffic module can also use `--add-dynamic-module` in this configuration. Without expr, ordinary `limit_traffic_rate` directives and per-zone inheritance remain available.
+
 ## Configuration
 
 ### `limit_traffic_rate_zone`
@@ -44,14 +56,15 @@ load_module modules/ngx_http_limit_traffic_rate_filter_module.so;
 Declares a named shared-memory zone. Place in the `http {}` context.
 
 ```
-Syntax:  limit_traffic_rate_zone <name> <$variable> <size>;
+Syntax:  limit_traffic_rate_zone key zone=name:size;
+Default: —
 Context: http
 ```
 
 | Parameter | Description |
 |---|---|
 | `name` | Zone identifier referenced by `limit_traffic_rate` |
-| `$variable` | nginx variable used as the grouping key |
+| `key` | Grouping key containing text, nginx variables, or both |
 | `size` | Shared memory size (e.g. `32m`). Minimum is 8 × page size |
 
 Common key variables:
@@ -67,28 +80,62 @@ Common key variables:
 Applies a zone's limit within a context.
 
 ```
-Syntax:  limit_traffic_rate <zone_name> <rate>;
-Context: http, server, location
+Syntax:  limit_traffic_rate zone=name rate=rate;
+Default: —
+Context: http, server, location, when
 ```
 
 Rate units: `k` (kilobytes/sec), `m` (megabytes/sec), or plain bytes/sec. The rate must be greater than zero.
+
+Both parameters are required and may appear in either order. The rate is a fixed configuration value; use `when` to select different rates.
+
+Configuration is merged separately for each case-sensitive zone name. A directive for one zone does not remove inherited limits for other zones. When several zones apply, a request participates in each zone once and uses the lowest of their per-request rates.
+
+With expr, the first unconditional or matching conditional value for a zone is selected in declaration order at the current level. Put conditional values before an unconditional fallback. If no local value matches, the parent values for that zone are considered. A local unconditional value replaces the inherited values for that zone. If no value matches at any level, that zone does not limit or count the request.
+
+The same zone cannot be configured twice for the same condition at one configuration level, or twice unconditionally. Splitting an equivalent `when` block does not change this check. Different zones may share the same condition. `limit_traffic_rate_zone` declares shared memory unconditionally and cannot be used inside `when`.
 
 ## Example
 
 ```nginx
 http {
     # One rate bucket per client IP, 32 MB of shared memory.
-    limit_traffic_rate_zone  rate  $remote_addr  32m;
+    limit_traffic_rate_zone $remote_addr zone=rate:32m;
 
     server {
         # Target aggregate bandwidth per IP: 500 KiB/s.
         # With 8 steady requests, each gets about 62.5 KiB/s.
         location /download/ {
-            limit_traffic_rate  rate  500k;
+            limit_traffic_rate zone=rate rate=500k;
         }
     }
 }
 ```
+
+With expr, a location can override one zone conditionally while retaining another inherited zone:
+
+```nginx
+http {
+    limit_traffic_rate_zone $binary_remote_addr zone=client:32m;
+    limit_traffic_rate_zone $uri zone=object:32m;
+
+    expr slow str_starts_with $uri /download/slow/;
+    limit_traffic_rate zone=client rate=500k;
+    limit_traffic_rate zone=object rate=2m;
+
+    server {
+        location /download/ {
+            when slow {
+                limit_traffic_rate zone=client rate=100k;
+            }
+        }
+    }
+}
+```
+
+Requests matching `slow` use `zone=client rate=100k`; other requests inherit `zone=client rate=500k`. Both also participate in `zone=object rate=2m`.
+
+> The previous positional forms, `limit_traffic_rate_zone name $variable size` and `limit_traffic_rate name rate`, must be converted to the syntax above.
 
 ## Behaviour
 
@@ -98,11 +145,13 @@ http {
 
 **Admission and overload.** The shared counter is a `u_short`: once a key has 65,535 active registered requests, additional requests for that key receive HTTP 503 instead of wrapping the counter. An exhausted shared-memory slab also produces HTTP 503. No durable worker-crash recovery is implemented: if a worker is killed without request cleanup, a stale count can persist until the shared zone is recreated. Normal request completion and client aborts perform cleanup via the request pool.
 
-**Passthrough.** The module does not apply a limit when no `limit_traffic_rate` directive is present, the key variable is empty or not found, or the key value exceeds 1024 bytes.
+**Request lifecycle.** Conditions and zone keys are evaluated in PREACCESS. An internal redirect that runs PREACCESS again releases the previous registrations and evaluates the new configuration. If admission to any zone fails, all zones already registered during that evaluation are released. Body-filter calls refresh the selected rates from the current shared counters without changing the selected conditions.
+
+**Passthrough.** A zone is skipped when no value matches, its evaluated key is empty, or its key value exceeds 1024 bytes. Other applicable zones remain effective. When no zone applies, the native nginx `limit_rate` behaviour is preserved.
 
 ## Validation
 
-The fork also runs `t/limit_traffic_rate.t` and the load tests against nginx-ext 1.31.8 in static and dynamic module builds.
+The fork runs the nginx integration and load tests against nginx-ext 1.31.8 in static and dynamic module builds, both with and without expr. The integration tests cover per-zone inheritance, conditional fallbacks, declaration order, equivalent `when` blocks and includes, concurrent counters, internal redirects and cleanup.
 
 The load tests under `t/load/` run with either a statically compiled module or a dynamically loaded `.so`. CI configures nginx versions `1.26.3`, `1.28.2` and `1.29.6` in both modes. The test suite includes multi-worker throughput, nginx `limit_rate` precedence, invalid configuration, request cleanup, graceful reload, concurrent shared-zone exhaustion and a 5,000-request repeated-allocation test.
 
