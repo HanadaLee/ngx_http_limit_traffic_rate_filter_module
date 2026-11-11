@@ -65,6 +65,8 @@ jobs:
             build-essential \
             libpcre2-dev \
             libssl-dev \
+            openssl \
+            libcryptx-perl \
             zlib1g-dev \
             perl \
             curl \
