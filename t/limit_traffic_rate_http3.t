@@ -15,7 +15,7 @@ use Test::Nginx;
 use Test::Nginx::HTTP3;
 
 my $t = Test::Nginx->new()->has(qw/http http_v3 rewrite cryptx
-    ngx_http_limit_traffic_rate_filter_module/)->has_daemon('openssl')->plan(14);
+    ngx_http_limit_traffic_rate_filter_module/)->has_daemon('openssl')->plan(17);
 
 my $conf = <<'EOF';
 %%TEST_GLOBALS%%
@@ -33,6 +33,14 @@ http {
         limit_traffic_rate zone=rate rate=32k;
         add_header X-Rate $limit_rate always;
         location / { }
+        location = /alternate {
+            limit_traffic_rate zone=small rate=64k;
+            alias %%TESTDIR%%/hold;
+        }
+        location = /off {
+            limit_traffic_rate off;
+            alias %%TESTDIR%%/data;
+        }
         location = /no-content { return 204; }
         location = /not-modified { return 304; }
         location = /timed { limit_traffic_rate zone=rate rate=8k; }
@@ -73,6 +81,15 @@ my $other = $s->new_stream({ path => '/data?key=other' });
 headers($s, $other, 200, 32768, 'different key has an independent share', 1);
 my $head = $s->new_stream({ path => '/hold?key=shared', method => 'HEAD' });
 headers($s, $head, 200, 0, 'HTTP/3 HEAD does not register', 1);
+
+my $alternate = $s->new_stream({ path => '/alternate?key=shared' });
+headers($s, $alternate, 200, 65536, 'local policy selects another zone');
+my $parent = $s->new_stream({ path => '/data?key=shared' });
+headers($s, $parent, 200, 10922, 'selected zone does not count in the parent zone', 1);
+my $off = $s->new_stream({ path => '/off?key=shared' });
+headers($s, $off, 200, 0, 'off bypasses the inherited policy', 1);
+$s->stop_sending($alternate, 0x010c);
+$s->read(all => [{ sid => $alternate, type => 'RESET_STREAM' }]);
 
 $s->stop_sending($second, 0x010c);
 $s->read(all => [{ sid => $second, type => 'RESET_STREAM' }]);

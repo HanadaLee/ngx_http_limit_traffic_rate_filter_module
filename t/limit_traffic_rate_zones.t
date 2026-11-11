@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# Per-zone inheritance, concurrent accounting and internal redirects.
+# Whole-policy inheritance, independent zones and internal redirects.
 
 use warnings;
 use strict;
@@ -14,7 +14,7 @@ BEGIN { use FindBin; chdir($FindBin::Bin); }
 use Test::Nginx;
 
 my $t = Test::Nginx->new()->has(qw/http rewrite
-    ngx_http_limit_traffic_rate_filter_module/)->plan(27);
+    ngx_http_limit_traffic_rate_filter_module/)->plan(31);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 %%TEST_GLOBALS%%
@@ -51,6 +51,11 @@ http {
         location = /hold {
             alias %%TESTDIR%%/hold;
         }
+        location = /off {
+            limit_traffic_rate off;
+            limit_rate 20k;
+            alias %%TESTDIR%%/data;
+        }
         location = /compound {
             limit_traffic_rate rate=10k zone=compound;
             alias %%TESTDIR%%/data;
@@ -60,7 +65,7 @@ http {
             alias %%TESTDIR%%/hold;
         }
         location = /key_redirect {
-            try_files /missing /hold?client=target;
+            try_files /missing /hold?object=target;
         }
         location = /redirect {
             limit_traffic_rate zone=object rate=2k;
@@ -87,23 +92,25 @@ $t->write_file('data', 'ok');
 $t->write_file('hold', 'X' x (1024 * 1024));
 $t->run();
 
-rate('/?client=a', 16384, 'HTTP zone survives a different server zone');
+rate('/?client=a', 0, 'empty selected key does not fall back to the HTTP policy');
 rate('/?object=a', 12288, 'server zone applies');
-rate('/?client=a&object=a', 12288, 'minimum of both zone rates');
-rate('/override?client=a', 32768, 'location overrides the same zone');
-rate('/override?client=a&object=a', 12288, 'other zone remains inherited');
-rate('/?client=a', 16384, 'location override does not mutate siblings');
+rate('/?client=a&object=a', 12288, 'server policy replaces the entire HTTP policy');
+rate('/override?client=a', 32768, 'location replaces the server policy with another zone');
+rate('/override?client=a&object=a', 32768, 'location policy does not retain the server zone');
+rate('/?object=a', 12288, 'location override does not mutate siblings');
 rate('/case?client=a', 8192, 'zone names are case sensitive');
-rate('/', 0, 'empty keys bypass every zone');
+rate('/', 0, 'empty selected key bypasses the module');
 
 my $s = http_get('/hold?client=shared&object=shared', start => 1);
 my $headers = read_headers($s);
-like($headers, qr/^X-Rate: 12288\r?$/m, 'holding request joins both zones');
+like($headers, qr/^X-Rate: 12288\r?$/m, 'holding request joins only the selected zone');
 
-rate('/?client=shared', 8192, 'client counter participates independently');
-rate('/?object=shared', 6144, 'object counter participates independently');
+rate('/override?client=shared', 32768, 'unselected parent zone has no registration');
+rate('/?object=shared', 6144, 'selected zone shares its counter');
+rate('/target?object=shared', 12288,
+    'different policy rates share the same zone counter');
 rate('/?client=shared&object=shared', 6144,
-    'request joins each zone only once');
+    'request joins the selected zone only once');
 rate('/?client=other&object=other', 12288, 'unrelated keys stay independent');
 
 close $s;
@@ -116,8 +123,8 @@ for (1 .. 100) {
     }
     sleep 0.02;
 }
-ok($released, 'client abort releases both zones');
-rate('/?client=shared', 16384, 'client counter restored after abort');
+ok($released, 'client abort releases the selected zone');
+rate('/override?client=shared', 32768, 'unselected zone remains unaffected');
 rate('/?object=shared', 12288, 'object counter restored after abort');
 rate('/redirect?object=redirect', 24576,
     'URI redirect reevaluates configuration without double counting');
@@ -135,11 +142,16 @@ rate('/compound?a=other&b=two', 10240, 'first key component is significant');
 close $compound;
 
 my $redirect = http_get('/key_redirect?client=source&object=source', start => 1);
-like(read_headers($redirect), qr/^X-Rate: 16384\r?$/m,
+like(read_headers($redirect), qr/^X-Rate: 12288\r?$/m,
     'internal redirect reevaluates the zone key');
-rate('/?client=source', 16384, 'redirect releases the original key');
-rate('/?client=target', 8192, 'redirect registers the new key');
+rate('/?object=source', 12288, 'redirect leaves the original key unregistered');
+rate('/?object=target', 6144, 'redirect registers the new key');
 close $redirect;
+
+rate('/off?object=shared', 0, 'off suppresses inherited registration');
+rate('/override?object=shared', 0, 'empty local key does not try the server zone');
+rate('/?object=' . ('x' x 1025) . '&client=shared', 0,
+    'oversized selected key does not fall back to the parent policy');
 
 $t->stop();
 

@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# Reject duplicate values for one zone and one condition at the same level.
+# A complete policy is unique within one condition and configuration level.
 
 use warnings;
 use strict;
@@ -15,7 +15,7 @@ my $t = Test::Nginx->new()->has(qw/http
     ngx_http_limit_traffic_rate_filter_module/);
 my @cases = (
     ['limit_traffic_rate zone=one rate=1k; limit_traffic_rate zone=one rate=2k;', qr/is duplicate/],
-    ['limit_traffic_rate zone=one rate=1k; limit_traffic_rate zone=two rate=2k;', undef],
+    ['limit_traffic_rate zone=one rate=1k; limit_traffic_rate zone=two rate=2k;', qr/is duplicate/],
     ['limit_traffic_rate zone=missing rate=1k;', qr/zero size shared memory zone/],
     ['limit_traffic_rate rate=2k zone=one;', undef],
     ['limit_traffic_rate_zone shared zone=literal:1m; '
@@ -36,11 +36,20 @@ my @cases = (
     ['limit_traffic_rate zone=one zone=two;', qr/duplicate parameter/],
     ['limit_traffic_rate rate=1k rate=2k;', qr/duplicate parameter/],
     ['limit_traffic_rate zone=one other=1k;', qr/invalid parameter/],
-    ['limit_traffic_rate zone=one;', qr/invalid number of arguments/],
+    ['limit_traffic_rate zone=one;', qr/invalid parameter/],
     ['limit_traffic_rate one 1k;', qr/invalid parameter/],
     ['limit_traffic_rate_zone old $arg_key 1m;',
         qr/invalid number of arguments/],
 );
+
+push @cases,
+    ['limit_traffic_rate off;', undef],
+    ['limit_traffic_rate off; limit_traffic_rate off;', qr/is duplicate/],
+    ['limit_traffic_rate off; limit_traffic_rate zone=one rate=1k;', qr/is duplicate/],
+    ['limit_traffic_rate zone=one rate=1k; limit_traffic_rate off;', qr/is duplicate/],
+    ['limit_traffic_rate off rate=1k;', qr/invalid parameter/],
+    ['limit_traffic_rate on;', qr/invalid parameter/],
+    ['limit_traffic_rate;', qr/invalid number of arguments/];
 
 my $expr = $t->has_module('ngx_expr_module');
 if ($expr) {
@@ -50,16 +59,22 @@ if ($expr) {
         ['when a { limit_traffic_rate zone=one rate=1k; } '
             . 'when a { limit_traffic_rate zone=one rate=2k; }', qr/is duplicate/],
         ['when a { limit_traffic_rate zone=one rate=1k; limit_traffic_rate zone=two rate=2k; }',
-            undef],
+            qr/is duplicate/],
         ['when a { limit_traffic_rate zone=one rate=1k; } '
-            . 'when a { limit_traffic_rate zone=two rate=2k; }', undef],
+            . 'when a { limit_traffic_rate zone=two rate=2k; }', qr/is duplicate/],
         ['when a { limit_traffic_rate zone=one rate=1k; } limit_traffic_rate zone=one rate=2k;',
             undef],
+        ['when a { limit_traffic_rate off; } limit_traffic_rate zone=one rate=2k;', undef],
+        ['when a { limit_traffic_rate off; } when a { limit_traffic_rate zone=two rate=2k; }', qr/is duplicate/],
+        ['when a { include policy.inc; } when a { limit_traffic_rate zone=two rate=2k; }', qr/is duplicate/],
+        ['when a { limit_traffic_rate zone=one rate=1k; } '
+            . 'limit_traffic_rate zone=two rate=2k;', undef],
         ['when a { limit_traffic_rate zone=one rate=0; }', qr/invalid rate/],
         ['when a { limit_traffic_rate_zone $arg_key zone=three:1m; }',
             qr/directive is not allowed here/];
 }
 
+$t->write_file('policy.inc', 'limit_traffic_rate zone=one rate=1k;');
 $t->plan(scalar @cases);
 my $nginx = $ENV{TEST_NGINX_BINARY};
 my $dir = $t->testdir();
