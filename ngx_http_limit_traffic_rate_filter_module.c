@@ -1,6 +1,8 @@
 
 /*
- * Copyright (C) bigplum@gmail.com
+ * Copyright (C) 2010 Simon (bigplum@gmail.com).
+ * Copyright (C) 2016-2026 Denis Denisov.
+ * Copyright (C) Hanada
  */
 
 
