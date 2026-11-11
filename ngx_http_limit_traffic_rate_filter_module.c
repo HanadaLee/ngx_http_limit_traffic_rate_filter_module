@@ -54,10 +54,12 @@ typedef struct {
 typedef struct {
     ngx_http_request_t            *request;
     ngx_array_t                    limits;
+    unsigned                       skip:1;
 } ngx_http_limit_traffic_rate_req_ctx_t;
 
 
-static ngx_int_t ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_limit_traffic_rate_header_filter(
+    ngx_http_request_t *r);
 static ngx_int_t ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r,
     ngx_chain_t *in);
 static void ngx_http_limit_traffic_rate_update(ngx_http_request_t *r,
@@ -136,7 +138,8 @@ ngx_module_t  ngx_http_limit_traffic_rate_filter_module = {
 };
 
 
-static ngx_http_output_body_filter_pt  ngx_http_next_body_filter;
+static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
+static ngx_http_output_body_filter_pt    ngx_http_next_body_filter;
 
 
 /* A zero rate disables nginx's limiter. Never round a share down to zero. */
@@ -189,11 +192,12 @@ ngx_http_limit_traffic_rate_lookup(ngx_http_limit_traffic_rate_ctx_t *ctx,
 
 
 static ngx_int_t
-ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
+ngx_http_limit_traffic_rate_header_filter(ngx_http_request_t *r)
 {
     size_t                                  n, rate;
     uint32_t                                hash;
     ngx_str_t                               key;
+    ngx_int_t                               status;
     ngx_uint_t                              i;
     ngx_slab_pool_t                        *shpool;
     ngx_rbtree_node_t                      *node;
@@ -205,11 +209,15 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
     ngx_http_limit_traffic_rate_cleanup_t  *lrcln;
     ngx_http_limit_traffic_rate_req_ctx_t  *rctx;
 
+    if (r != r->main || r->header_sent) {
+        return ngx_http_next_header_filter(r);
+    }
+
     rctx = ngx_http_get_module_ctx(r,
                                    ngx_http_limit_traffic_rate_filter_module);
 
-    /* Internal redirects clear module contexts, but retain pool cleanups. */
-    if (rctx == NULL && r->internal) {
+    /* Error responses can clear contexts while retaining pool cleanups. */
+    if (rctx == NULL && (r->internal || r->filter_finalize)) {
         for (cln = r->pool->cleanup; cln; cln = cln->next) {
             if (cln->handler != ngx_http_limit_traffic_rate_cleanup) {
                 continue;
@@ -233,14 +241,48 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
         r->limit_rate_set = 0;
     }
 
+    if ((rctx != NULL && rctx->skip)
+        || r->header_only
+        || r->method == NGX_HTTP_HEAD
+        || r->headers_out.status < NGX_HTTP_OK
+        || r->headers_out.status == NGX_HTTP_NO_CONTENT
+        || r->headers_out.status == NGX_HTTP_NOT_MODIFIED
+        || r->headers_out.content_length_n == 0)
+    {
+        return ngx_http_next_header_filter(r);
+    }
+
     lrcf =
         ngx_http_get_module_loc_conf(r,
                                      ngx_http_limit_traffic_rate_filter_module);
 
     if (lrcf->limits.nelts == 0) {
-        return NGX_DECLINED;
+        return ngx_http_next_header_filter(r);
     }
 
+    if (rctx == NULL) {
+        n = sizeof(ngx_http_limit_traffic_rate_req_ctx_t);
+        cln = ngx_pool_cleanup_add(r->pool, n);
+        if (cln == NULL) {
+            return NGX_ERROR;
+        }
+
+        rctx = cln->data;
+        rctx->request = r;
+        rctx->skip = 0;
+
+        if (ngx_array_init(&rctx->limits, r->pool, lrcf->limits.nelts,
+                           sizeof(ngx_http_limit_traffic_rate_cleanup_t))
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+
+        cln->handler = ngx_http_limit_traffic_rate_cleanup;
+        ngx_http_set_ctx(r, rctx, ngx_http_limit_traffic_rate_filter_module);
+    }
+
+    status = NGX_HTTP_INTERNAL_SERVER_ERROR;
     limits = lrcf->limits.elts;
 
     for (i = 0; i < lrcf->limits.nelts; i++) {
@@ -258,11 +300,7 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
         ctx = limits[i].shm_zone->data;
 
         if (ngx_http_complex_value(r, &ctx->key, &key) != NGX_OK) {
-            if (rctx != NULL) {
-                ngx_http_limit_traffic_rate_cleanup(rctx);
-            }
-
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            goto failed;
         }
 
         if (key.len == 0) {
@@ -276,33 +314,10 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
             continue;
         }
 
-        if (rctx == NULL) {
-            n = sizeof(ngx_http_limit_traffic_rate_req_ctx_t);
-            cln = ngx_pool_cleanup_add(r->pool, n);
-            if (cln == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            rctx = cln->data;
-            rctx->request = r;
-
-            if (ngx_array_init(&rctx->limits, r->pool, lrcf->limits.nelts,
-                               sizeof(ngx_http_limit_traffic_rate_cleanup_t))
-                != NGX_OK)
-            {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            cln->handler = ngx_http_limit_traffic_rate_cleanup;
-            ngx_http_set_ctx(r, rctx,
-                             ngx_http_limit_traffic_rate_filter_module);
-        }
-
         /* Allocate request state before taking the shared-memory lock. */
         lrcln = ngx_array_push(&rctx->limits);
         if (lrcln == NULL) {
-            ngx_http_limit_traffic_rate_cleanup(rctx);
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            goto failed;
         }
 
         lrcln->shm_zone = limits[i].shm_zone;
@@ -321,8 +336,8 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
 
             if (lr->conn == (u_short) -1) {
                 ngx_shmtx_unlock(&shpool->mutex);
-                ngx_http_limit_traffic_rate_cleanup(rctx);
-                return NGX_HTTP_SERVICE_UNAVAILABLE;
+                status = NGX_HTTP_SERVICE_UNAVAILABLE;
+                goto failed;
             }
 
             lr->conn++;
@@ -334,8 +349,8 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
             node = ngx_slab_alloc_locked(shpool, n);
             if (node == NULL) {
                 ngx_shmtx_unlock(&shpool->mutex);
-                ngx_http_limit_traffic_rate_cleanup(rctx);
-                return NGX_HTTP_SERVICE_UNAVAILABLE;
+                status = NGX_HTTP_SERVICE_UNAVAILABLE;
+                goto failed;
             }
 
             lr = (ngx_http_limit_traffic_rate_node_t *) &node->color;
@@ -356,19 +371,29 @@ ngx_http_limit_traffic_rate_handler(ngx_http_request_t *r)
         ngx_shmtx_unlock(&shpool->mutex);
     }
 
-    if (rctx != NULL) {
-        ngx_http_limit_traffic_rate_update(r, rctx);
-    }
+    ngx_http_limit_traffic_rate_update(r, rctx);
 
-    return NGX_DECLINED;
+    return ngx_http_next_header_filter(r);
+
+failed:
+
+    ngx_http_limit_traffic_rate_cleanup(rctx);
+    rctx->skip = 1;
+
+    /* The cleanup record preserves the skip flag across context resets. */
+    return ngx_http_filter_finalize_request(r, NULL, status);
 }
 
 
-/* Refresh shares on output; selected conditions remain fixed until reentry. */
+/* Refresh shares selected while filtering the main response headers. */
 static ngx_int_t
 ngx_http_limit_traffic_rate_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
     ngx_http_limit_traffic_rate_req_ctx_t  *ctx;
+
+    if (r != r->main) {
+        return ngx_http_next_body_filter(r, in);
+    }
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_limit_traffic_rate_filter_module);
 
@@ -881,17 +906,8 @@ ngx_http_limit_traffic_rate(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t
 ngx_http_limit_traffic_rate_init(ngx_conf_t *cf)
 {
-    ngx_http_handler_pt       *h;
-    ngx_http_core_main_conf_t  *cmcf;
-
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_limit_traffic_rate_handler;
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_limit_traffic_rate_header_filter;
 
     ngx_http_next_body_filter = ngx_http_top_body_filter;
     ngx_http_top_body_filter = ngx_http_limit_traffic_rate_body_filter;
