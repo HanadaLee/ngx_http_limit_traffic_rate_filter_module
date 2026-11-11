@@ -8,6 +8,8 @@ Unlike nginx's per-request `limit_rate`, this module divides the configured rate
 per-request rate = max(1 byte/s, configured_limit / active_requests)
 ```
 
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Requirements
 
 - nginx 1.21.5 or later (documented minimum; CI currently builds 1.26.3, 1.28.2 and 1.29.6, not the minimum)
